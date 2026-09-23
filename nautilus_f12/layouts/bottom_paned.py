@@ -4,7 +4,7 @@ Bottom-Docked Paned Layout Strategy
 
 import logging
 from .base import BaseLayoutStrategy
-from ..gi_stack import IS_GTK4, Gtk
+from ..gi_stack import IS_GTK4, Gtk, get_widget_children
 from ..config import DEFAULT_TERMINAL_HEIGHT, EXPAND_VIEW_WIDGET_NAMES
 
 logger = logging.getLogger("nautilus-f12")
@@ -60,7 +60,7 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
             self.paned.pack2(self.bottom_box, resize=False, shrink=False)
 
         # Relocate existing view children from slot into top_vbox
-        children = slot_widget.get_children() if hasattr(slot_widget, "get_children") else []
+        children = get_widget_children(slot_widget)
         for child in children:
             if child != self.paned:
                 slot_widget.remove(child)
@@ -84,7 +84,10 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
         if IS_GTK4:
             self.scrolled_window.set_child(terminal_widget)
         else:
-            old_child = self.scrolled_window.get_child()
+            old_child = self.scrolled_window.get_child() if hasattr(self.scrolled_window, "get_child") else None
+            if not old_child and hasattr(self.scrolled_window, "get_children"):
+                children = self.scrolled_window.get_children()
+                old_child = children[0] if children else None
             if old_child:
                 self.scrolled_window.remove(old_child)
             if terminal_widget:
@@ -95,7 +98,7 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
         """Packs any newly navigated folder view into top_vbox."""
         if not slot_widget or not self.top_vbox:
             return
-        children = slot_widget.get_children() if hasattr(slot_widget, "get_children") else []
+        children = get_widget_children(slot_widget)
         for child in children:
             if child != self.paned:
                 slot_widget.remove(child)

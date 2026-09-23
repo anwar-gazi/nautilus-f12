@@ -26,6 +26,23 @@ except ValueError:
 
 from gi.repository import GObject, Gtk, Gdk, GLib, Gio, Pango, Vte, Nautilus
 
+
+def get_widget_children(widget: Gtk.Widget) -> list:
+    """Safely retrieves children of a widget across both GTK3 and GTK4."""
+    children = []
+    if not widget:
+        return children
+
+    if hasattr(widget, "get_first_child"):
+        child = widget.get_first_child()
+        while child:
+            children.append(child)
+            child = child.get_next_sibling()
+    elif hasattr(widget, "get_children"):
+        children = widget.get_children()
+    return children
+
+
 __all__ = [
     "IS_GTK4",
     "GObject",
@@ -36,4 +53,5 @@ __all__ = [
     "Pango",
     "Vte",
     "Nautilus",
+    "get_widget_children",
 ]

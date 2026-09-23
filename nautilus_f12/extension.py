@@ -4,10 +4,11 @@ Nautilus Extension Entrypoint & Anchor
 
 import os
 import logging
-from .gi_stack import GObject, Gtk, Gio, GLib, Nautilus
+from .gi_stack import GObject, Gtk, Gdk, Gio, GLib, Nautilus
 from .config import SLOT_CONTAINER_NAMES
 from .session import TerminalSession
 from .layouts import BottomPanedLayoutStrategy
+from .input import WindowKeyController
 
 logger = logging.getLogger("nautilus-f12")
 
@@ -86,6 +87,14 @@ class NautilusF12Extension(GObject.GObject, Nautilus.LocationWidgetProvider):
         if not slot:
             return
 
+        # Ensure window-level F12 key listener is installed
+        if not hasattr(anchor.window, "_f12_key_controller"):
+            anchor.window._f12_key_controller = WindowKeyController(
+                anchor.window,
+                Gdk.KEY_F12,
+                lambda: self.toggle_active_session_for_window(anchor.window),
+            )
+
         if slot in self.sessions:
             session = self.sessions[slot]
             session.update_location(anchor.path)
@@ -95,9 +104,34 @@ class NautilusF12Extension(GObject.GObject, Nautilus.LocationWidgetProvider):
                 window=anchor.window,
                 initial_path=anchor.path,
                 layout_strategy=BottomPanedLayoutStrategy(),
+                on_destroy_callback=self._on_slot_destroyed,
             )
             self.sessions[slot] = session
             logger.info("Bound TerminalSession to active NautilusWindowSlot.")
+
+    def toggle_active_session_for_window(self, window: Gtk.Window):
+        """Finds the currently visible/mapped tab session in the window and toggles it."""
+        window_sessions = [s for s in self.sessions.values() if s.window == window]
+        if not window_sessions:
+            return
+
+        # Locate the session whose slot is currently visible/mapped (active tab)
+        active_session = None
+        for s in window_sessions:
+            if s.slot.get_mapped():
+                active_session = s
+                break
+
+        if not active_session:
+            active_session = window_sessions[-1]
+
+        active_session.toggle()
+
+    def _on_slot_destroyed(self, slot_widget: Gtk.Widget):
+        """Removes session reference when tab closes."""
+        if slot_widget in self.sessions:
+            del self.sessions[slot_widget]
+            logger.info("Cleaned up session for closed Nautilus slot.")
 
     def get_widget(self, uri_or_file, window: Gtk.Window) -> Gtk.Widget:
         """Called by Nautilus when loading a directory view."""

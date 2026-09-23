@@ -5,17 +5,16 @@ Terminal Session Coordinator
 import os
 import logging
 from typing import Optional
-from .gi_stack import Gtk, Gdk
+from .gi_stack import Gtk
 from .terminal import VteTerminalWidget, ShellProcess
 from .layouts import BaseLayoutStrategy, BottomPanedLayoutStrategy
-from .input import WindowKeyController
 
 logger = logging.getLogger("nautilus-f12")
 
 
 class TerminalSession:
     """
-    Coordinates the terminal widget, shell process lifecycle, layout strategy, and window input.
+    Coordinates the terminal widget, shell process lifecycle, and layout strategy for a slot.
     """
 
     def __init__(
@@ -24,10 +23,12 @@ class TerminalSession:
         window: Gtk.Window,
         initial_path: str,
         layout_strategy: Optional[BaseLayoutStrategy] = None,
+        on_destroy_callback: Optional[callable] = None,
     ):
         self.slot = slot_widget
         self.window = window
         self.current_path = initial_path if initial_path else os.path.expanduser("~")
+        self.on_destroy_callback = on_destroy_callback
         
         # State
         self.is_visible = False
@@ -40,10 +41,8 @@ class TerminalSession:
         # Mount into slot hierarchy
         self.layout.mount(self.slot, None)
         
-        # Bind F12 on window
-        self.key_controller = WindowKeyController(self.window, Gdk.KEY_F12, self.toggle)
-        
-        # Handle window destroy
+        # Handle slot / tab destroy
+        self.slot.connect("destroy", self._on_slot_destroy)
         self.window.connect("destroy", self._on_window_destroy)
 
     def _ensure_terminal_spawned(self):
@@ -103,7 +102,17 @@ class TerminalSession:
         self.terminal_widget = None
         self.shell_process = None
 
-    def _on_window_destroy(self, widget):
-        """Cleans up child processes on window close."""
+    def terminate(self):
+        """Terminates shell process cleanly."""
         if self.shell_process:
             self.shell_process.terminate()
+
+    def _on_slot_destroy(self, widget):
+        """Cleans up child processes and callback when the tab/slot closes."""
+        self.terminate()
+        if self.on_destroy_callback:
+            self.on_destroy_callback(self.slot)
+
+    def _on_window_destroy(self, widget):
+        """Cleans up child processes on window close."""
+        self.terminate()

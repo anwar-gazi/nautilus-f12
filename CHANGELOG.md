@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.3.1] - (23-09-2026 09:43 AM GMT+6)
+
+### Fixed
+- **Multi-Tab Active Session Routing (`nautilus_f12/extension.py`)**:
+  - Fixed an event routing issue where <kbd>F12</kbd> keypresses in multi-tab windows were bound to the first created tab rather than the active tab.
+  - Implemented dynamic mapped slot inspection (`slot.get_mapped()`) to route keypresses directly to the currently visible tab.
+- **GTK4 Child Sibling Iteration (`nautilus_f12/gi_stack.py`)**:
+  - Replaced legacy `get_children()` calls in layout repacking with a dual-mode helper `get_widget_children()` utilizing `get_first_child()` and `get_next_sibling()` under GTK4.
+- **Clean Tab/Slot Lifecycle Management**:
+  - Connected `slot.connect("destroy", ...)` to ensure closing tabs (`Ctrl+W`) or split views cleans up the session reference and terminates background shell processes.
+- **Redundant Initial Directory Sync**:
+  - Set `last_synced_path` on initial process spawn in `ShellProcess` to eliminate sending an unnecessary `cd` command when revealing a freshly spawned shell.
+
+---
+
 ## [1.3.0] - (23-09-2026 09:41 AM GMT+6)
 
 ### Added

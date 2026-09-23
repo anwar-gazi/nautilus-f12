@@ -23,6 +23,7 @@ class ShellProcess:
         self.pid: Optional[int] = None
         self.is_running = False
         self.last_synced_path: Optional[str] = None
+        self._spawn_working_dir: Optional[str] = None
         
         self.vte.connect("child-exited", self._on_vte_child_exited)
 
@@ -31,6 +32,7 @@ class ShellProcess:
         if not os.path.isdir(working_dir):
             working_dir = os.path.expanduser("~")
 
+        self._spawn_working_dir = working_dir
         shell_binary = os.environ.get("SHELL", "/bin/bash")
         logger.info(f"Asynchronously launching shell process in '{working_dir}'...")
 
@@ -76,6 +78,7 @@ class ShellProcess:
 
         self.pid = pid
         self.is_running = True
+        self.last_synced_path = self._spawn_working_dir
         logger.info(f"Shell process active (PID: {pid}).")
 
     def _on_vte_child_exited(self, terminal, status: int):
