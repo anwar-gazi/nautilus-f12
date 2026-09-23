@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.2.0] - (23-09-2026 09:38 AM GMT+6)
+
+### Added
+- **Bottom-Docked Split Layout Architecture (`Gtk.Paned`)**:
+  - Moved the terminal from the top location bar into the bottom of the active `NautilusWindowSlot`.
+  - Re-architected widget hierarchy using vertical `Gtk.Paned`: top pane houses the file browser view, and bottom pane embeds the resizable `Vte.Terminal`.
+  - Added lightweight `TerminalAnchor` to automatically detect slot insertion, relocate file view widgets into the top pane, and inject the bottom terminal.
+  - Added a horizontal separator bar and interactive resize handle between the file list and the bottom terminal console.
+
+---
+
 ## [1.1.1] - (23-09-2026 09:35 AM GMT+6)
 
 ### Fixed

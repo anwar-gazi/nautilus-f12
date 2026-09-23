@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
-Nautilus F12 Embedded Terminal Extension
+Nautilus F12 Embedded Terminal Extension (Bottom-Docked)
 Target Environment: Ubuntu 22.04+ | GNOME 42+ (GTK4 / GTK3) | Wayland / X11 | python3-nautilus
 
-Bulletproof Guardrails & Architecture:
-- Dual-Stack Version Negotiation: Dynamically binds to Nautilus 4.0 + GTK4 or Nautilus 3.0 + GTK3
-  without causing PyGObject namespace conflicts.
-- Wayland CAPTURE Key Controller: Intercepts F12 during the capture phase on the top-level NautilusWindow.
-- Asynchronous VTE Process Spawning: Non-blocking Vte.Terminal.spawn_async prevents UI freezing.
-- State Machine & Execution Matrix:
-  * F12 (First Run): Injects VTE widget, asynchronously spawns shell in active Nautilus directory, reveals & focuses.
-  * F12 (Toggle Hide/Show): Toggles visibility; keeps background process alive; syncs cwd on Show.
-  * Ctrl+D / Exit: Cleans up terminated process state, hides widget, and resets VTE instance.
-  * F12 (After Exit): Detects dead state, resets, and spawns a fresh shell in active directory.
-  * Window Close / Navigation: Cleans up subprocesses and reparents widgets safely.
+Architecture & Key Features:
+- Bottom-Docked UI: Automatically wraps the active Nautilus slot in a Gtk.Paned with the
+  file browser on top and the resizable embedded VTE terminal at the BOTTOM.
+- Dual-Stack Version Negotiation: Dynamically supports Nautilus 4.0 + GTK4 and Nautilus 3.0 + GTK3
+  without PyGObject namespace collision.
+- Wayland CAPTURE Key Controller: Intercepts F12 keypresses on the NautilusWindow before child views consume them.
+- Non-Blocking Async Spawn: Uses Vte.Terminal.spawn_async to prevent UI lockup during shell start.
+- Process State & Synchronization: Auto cd on directory navigation/reveal and clean reset on Ctrl+D / exit.
 """
 
 import os
@@ -47,6 +44,16 @@ except ValueError:
 
 from gi.repository import GObject, Gtk, Gdk, GLib, Gio, Pango, Vte, Nautilus
 
+_EXPAND_VIEW_WIDGETS = [
+    "GtkOverlay",
+    "NautilusCanvasView",
+    "NautilusViewIconController",
+    "NautilusListView",
+    "NautilusFilesView",
+    "GtkScrolledWindow",
+    "AdwToastOverlay",
+]
+
 
 def uri_to_path(file_or_uri) -> str:
     """Safely converts a Nautilus FileInfo or GVFS URI to a local filesystem path."""
@@ -73,60 +80,115 @@ def uri_to_path(file_or_uri) -> str:
     return os.path.expanduser("~")
 
 
-class WindowTerminalManager:
+def find_parent_by_name(widget, target_names):
+    """Walks widget tree upwards looking for a container matching target class/widget names."""
+    curr = widget
+    while curr:
+        name = curr.get_name() if hasattr(curr, "get_name") else ""
+        type_name = type(curr).__name__
+        if name in target_names or type_name in target_names:
+            return curr
+        curr = curr.get_parent() if hasattr(curr, "get_parent") else None
+    return None
+
+
+class SlotTerminalManager:
     """
-    Manages an embedded VTE terminal for a single Nautilus window.
-    Implements the complete lifecycle and execution matrix.
+    Manages an embedded bottom-docked VTE terminal for a NautilusWindowSlot.
     """
 
-    def __init__(self, window: Gtk.Window, extension_ref=None):
+    def __init__(self, slot_widget, window: Gtk.Window, initial_path: str):
+        self.slot = slot_widget
         self.window = window
-        self.extension_ref = extension_ref
-        
-        self.current_uri = None
-        self.current_path = os.path.expanduser("~")
+        self.current_path = initial_path if initial_path else os.path.expanduser("~")
         self.last_synced_path = None
         
-        # Process State
+        # State
         self.vte = None
         self.pid = None
         self.is_running = False
         self.is_visible = False
         
-        # GTK Widgets
-        self.container_box = None
+        # UI Widgets
+        self.paned = None
+        self.top_vbox = None
+        self.bottom_box = None
         self.scrolled_window = None
         self.separator = None
         
-        self._build_ui_containers()
+        self._inject_bottom_paned()
         self._install_key_controller()
         self._connect_window_signals()
 
-    def _build_ui_containers(self):
-        """Constructs UI container tree."""
-        self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    def _inject_bottom_paned(self):
+        """Wraps slot children in a Gtk.Paned with the terminal placed at the BOTTOM."""
+        self.paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        self.top_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        
+        self.separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_min_content_height(240)
         self.scrolled_window.set_size_request(-1, 240)
-        self.separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-
+        
+        # Assemble bottom panel
         if IS_GTK4:
-            self.container_box.set_visible(False)
-            self.scrolled_window.set_vexpand(False)
-            self.scrolled_window.set_hexpand(True)
-            self.container_box.append(self.scrolled_window)
-            self.container_box.append(self.separator)
+            self.bottom_box.append(self.separator)
+            self.bottom_box.append(self.scrolled_window)
+            self.bottom_box.set_visible(False)
+            
+            self.paned.set_start_child(self.top_vbox)
+            self.paned.set_end_child(self.bottom_box)
+            self.paned.set_resize_start_child(True)
+            self.paned.set_shrink_start_child(False)
+            self.paned.set_resize_end_child(False)
+            self.paned.set_shrink_end_child(False)
         else:
-            self.container_box.set_no_show_all(True)
-            self.container_box.hide()
-            self.container_box.pack_start(self.scrolled_window, True, True, 0)
-            self.container_box.pack_start(self.separator, False, False, 0)
+            self.bottom_box.pack_start(self.separator, False, False, 0)
+            self.bottom_box.pack_start(self.scrolled_window, True, True, 0)
+            self.bottom_box.set_no_show_all(True)
+            self.bottom_box.hide()
+            
+            # pack1 = Top (File view), pack2 = Bottom (Terminal)
+            self.paned.pack1(self.top_vbox, resize=True, shrink=False)
+            self.paned.pack2(self.bottom_box, resize=False, shrink=False)
+
+        # Move existing file views from slot into top_vbox
+        children = self.slot.get_children() if hasattr(self.slot, "get_children") else []
+        for child in children:
+            if child != self.paned:
+                self.slot.remove(child)
+                if IS_GTK4:
+                    self.top_vbox.append(child)
+                else:
+                    expand = child.get_name() in _EXPAND_VIEW_WIDGETS or True
+                    self.top_vbox.pack_start(child, expand, expand, 0)
+
+        # Place paned into slot
+        if IS_GTK4:
+            self.slot.append(self.paned)
+        else:
+            self.slot.pack_start(self.paned, True, True, 0)
+            self.paned.show()
+            self.top_vbox.show_all()
+
+    def repack_slot_views(self):
+        """Moves any newly created file view widgets inside top_vbox so they stay above the terminal."""
+        if not self.slot or not self.top_vbox:
+            return
+            
+        children = self.slot.get_children() if hasattr(self.slot, "get_children") else []
+        for child in children:
+            if child != self.paned:
+                self.slot.remove(child)
+                if IS_GTK4:
+                    self.top_vbox.append(child)
+                else:
+                    self.top_vbox.pack_start(child, True, True, 0)
+                    child.show_all()
 
     def _install_key_controller(self):
-        """
-        Binds F12 key listener to the top-level Nautilus window using CAPTURE phase.
-        Ensures Wayland compliance and guarantees F12 triggers regardless of focused child.
-        """
+        """Binds F12 key listener to the top-level Nautilus window using CAPTURE phase."""
         if hasattr(self.window, "_f12_terminal_controller_installed"):
             return
         
@@ -143,7 +205,7 @@ class WindowTerminalManager:
                     controller.connect("key-pressed", self._on_key_pressed_gtk3_controller)
                     self._key_controller = controller
                 except Exception as e:
-                    logger.debug(f"EventControllerKey setup fallback: {e}")
+                    logger.debug(f"EventControllerKey fallback: {e}")
             self.window.connect("key-press-event", self._on_key_press_gtk3)
             
         self.window._f12_terminal_controller_installed = True
@@ -154,14 +216,12 @@ class WindowTerminalManager:
         self.window.connect("destroy", self._on_window_destroy)
 
     def _on_window_destroy(self, widget):
-        """Kills any active shell process when the parent Nautilus window closes."""
+        """Kills active shell process when the parent Nautilus window closes."""
         logger.info("Nautilus window destroyed. Cleaning up shell process...")
         self._terminate_shell_process()
-        if self.extension_ref and self.window in self.extension_ref.managers:
-            del self.extension_ref.managers[self.window]
 
     def _terminate_shell_process(self):
-        """Terminates the shell process via SIGHUP/SIGTERM."""
+        """Terminates shell process via SIGHUP/SIGTERM."""
         if self.pid and self.is_running:
             try:
                 os.kill(self.pid, signal.SIGHUP)
@@ -194,9 +254,7 @@ class WindowTerminalManager:
         return False
 
     def create_and_spawn_terminal(self):
-        """
-        Matrix Case 1 & 4: Instantiates Vte.Terminal and spawns a fresh shell asynchronously.
-        """
+        """Instantiates Vte.Terminal at bottom and spawns shell asynchronously."""
         if Vte is None:
             logger.error("Vte is not available. Shell cannot be instantiated.")
             return
@@ -219,7 +277,7 @@ class WindowTerminalManager:
         # Connect exit signal (Ctrl+D / exit)
         self.vte.connect("child-exited", self._on_child_exited)
 
-        # Support Ctrl+Shift+C (Copy) and Ctrl+Shift+V (Paste)
+        # Shortcuts (Ctrl+Shift+C / Ctrl+Shift+V)
         if IS_GTK4:
             term_key_ctrl = Gtk.EventControllerKey.new()
             term_key_ctrl.connect("key-pressed", self._on_terminal_key_pressed_gtk4)
@@ -238,7 +296,6 @@ class WindowTerminalManager:
         self._spawn_shell_async(spawn_dir, [shell_binary])
 
     def _on_terminal_key_pressed_gtk4(self, controller, keyval, keycode, state) -> bool:
-        """Handles terminal copy/paste accelerators in GTK4."""
         ctrl_shift = (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)
         if (state & ctrl_shift) == ctrl_shift:
             if keyval in (Gdk.KEY_C, Gdk.KEY_c):
@@ -250,7 +307,6 @@ class WindowTerminalManager:
         return False
 
     def _on_terminal_key_press_gtk3(self, widget, event) -> bool:
-        """Handles terminal copy/paste accelerators in GTK3."""
         ctrl_shift = (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)
         if (event.state & ctrl_shift) == ctrl_shift:
             if event.keyval in (Gdk.KEY_C, Gdk.KEY_c):
@@ -263,7 +319,7 @@ class WindowTerminalManager:
 
     def _spawn_shell_async(self, working_dir: str, argv: list):
         """Asynchronously spawns shell child process via VTE without blocking UI."""
-        logger.info(f"Asynchronously launching shell in '{working_dir}'...")
+        logger.info(f"Asynchronously launching bottom terminal in '{working_dir}'...")
         try:
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
@@ -308,14 +364,11 @@ class WindowTerminalManager:
         self.pid = pid
         self.is_running = True
         self.last_synced_path = self.current_path
-        logger.info(f"Shell running (PID: {pid}).")
+        logger.info(f"Bottom terminal shell running (PID: {pid}).")
 
     def _on_child_exited(self, terminal, status):
-        """
-        Matrix Case 3: Ctrl+D / Exit
-        Triggered when shell terminates. Resets state and hides container.
-        """
-        logger.info(f"Child shell process exited (status {status}).")
+        """Handles shell process exit."""
+        logger.info(f"Bottom terminal shell process exited (status {status}).")
         self.is_running = False
         self.pid = None
         self.hide()
@@ -333,31 +386,27 @@ class WindowTerminalManager:
             self.vte = None
 
     def toggle(self):
-        """
-        Toggles terminal according to the execution matrix.
-        """
-        logger.info("Toggling Nautilus F12 Terminal...")
+        """Toggles terminal visibility."""
+        logger.info("Toggling bottom terminal...")
         if not self.is_running or self.vte is None:
-            # First Run (Matrix 1) or After Exit (Matrix 4)
             self.create_and_spawn_terminal()
             self.show()
         else:
-            # Toggle (Matrix 2)
             if self.is_visible:
                 self.hide()
             else:
                 self.show()
 
     def show(self):
-        """Shows container, performs directory synchronization, and focuses terminal."""
-        if self.container_box is None:
+        """Reveals bottom terminal, syncs cwd, and transfers keyboard focus."""
+        if self.bottom_box is None:
             return
 
         if IS_GTK4:
-            self.container_box.set_visible(True)
+            self.bottom_box.set_visible(True)
         else:
-            self.container_box.set_no_show_all(False)
-            self.container_box.show_all()
+            self.bottom_box.set_no_show_all(False)
+            self.bottom_box.show_all()
 
         self.is_visible = True
         self.sync_directory()
@@ -366,27 +415,27 @@ class WindowTerminalManager:
             self.vte.grab_focus()
 
     def hide(self):
-        """Hides container; background shell process continues executing."""
-        if self.container_box is None:
+        """Hides bottom terminal; background shell remains running."""
+        if self.bottom_box is None:
             return
 
         if IS_GTK4:
-            self.container_box.set_visible(False)
+            self.bottom_box.set_visible(False)
         else:
-            self.container_box.hide()
-            self.container_box.set_no_show_all(True)
+            self.bottom_box.hide()
+            self.bottom_box.set_no_show_all(True)
 
         self.is_visible = False
 
     def update_location(self, file_or_uri):
-        """Updates active path on folder navigation."""
-        self.current_uri = file_or_uri
+        """Updates active path on folder navigation and moves new view widgets into top vbox."""
         self.current_path = uri_to_path(file_or_uri)
+        self.repack_slot_views()
         if self.is_visible and self.is_running:
             self.sync_directory()
 
     def sync_directory(self):
-        """Synchronizes terminal's working directory with Nautilus active folder."""
+        """Sends 'cd <current_path>' to active shell if directory changed."""
         if not self.is_running or self.vte is None:
             return
 
@@ -406,19 +455,30 @@ class WindowTerminalManager:
             
         self.last_synced_path = self.current_path
 
-    def get_container(self) -> Gtk.Widget:
-        """
-        Returns the container widget.
-        Ensures clean unparenting before Nautilus embeds it in a new location slot.
-        """
-        if self.container_box is not None:
-            parent = self.container_box.get_parent()
-            if parent is not None:
-                if IS_GTK4:
-                    self.container_box.unparent()
-                else:
-                    parent.remove(self.container_box)
-        return self.container_box
+
+class TerminalAnchor(Gtk.EventBox if hasattr(Gtk, "EventBox") else Gtk.Box):
+    """
+    Lightweight anchor widget inserted by LocationWidgetProvider.
+    Locates the active NautilusWindowSlot and injects the bottom-docked terminal.
+    """
+
+    def __init__(self, uri, window, extension):
+        super().__init__()
+        self.uri = uri
+        self.nautilus_window = window
+        self.extension = extension
+        self.path = uri_to_path(uri)
+
+        # Trigger on insertion
+        if hasattr(self, "connect_after"):
+            self.connect_after("parent-set", self._on_parent_set)
+        else:
+            self.connect("notify::parent", self._on_parent_set)
+
+    def _on_parent_set(self, widget, old_parent=None):
+        if old_parent and not self.get_parent():
+            return
+        GLib.idle_add(self.extension.create_or_update_slot_terminal, self)
 
 
 class NautilusF12TerminalExtension(GObject.GObject, Nautilus.LocationWidgetProvider):
@@ -428,18 +488,23 @@ class NautilusF12TerminalExtension(GObject.GObject, Nautilus.LocationWidgetProvi
 
     def __init__(self):
         super().__init__()
-        self.managers = {}
-        logger.info("Nautilus F12 Terminal Extension loaded.")
+        self.slot_managers = {}
+        logger.info("Nautilus F12 Terminal Extension loaded (Bottom-Docked).")
+
+    def create_or_update_slot_terminal(self, anchor: TerminalAnchor):
+        """Locates NautilusWindowSlot from anchor and mounts or updates the bottom terminal."""
+        slot = find_parent_by_name(anchor, ["NautilusWindowSlot", "NautilusWindowSlotView", "GtkBox"])
+        if not slot:
+            return
+
+        if slot in self.slot_managers:
+            manager = self.slot_managers[slot]
+            manager.update_location(anchor.uri)
+        else:
+            manager = SlotTerminalManager(slot, anchor.nautilus_window, anchor.path)
+            self.slot_managers[slot] = manager
+            logger.info("Injected bottom terminal panel into active NautilusWindowSlot.")
 
     def get_widget(self, uri_or_file, window: Gtk.Window) -> Gtk.Widget:
-        """
-        Called by Nautilus for each view/slot. Returns the per-window embedded widget.
-        """
-        if window not in self.managers:
-            manager = WindowTerminalManager(window, extension_ref=self)
-            self.managers[window] = manager
-        else:
-            manager = self.managers[window]
-
-        manager.update_location(uri_or_file)
-        return manager.get_container()
+        """Returns the lightweight anchor widget to track active view slot."""
+        return TerminalAnchor(uri_or_file, window, self)
