@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.3.3] - (23-09-2026 09:56 AM GMT+6)
+
+### Fixed
+- **Zero-Allocation Top Location Bar (`nautilus_f12/extension.py`)**:
+  - Modified `LocationWidgetProvider.get_widget()` to return `None` rather than mounting a placeholder anchor in the location bar. This completely eliminates the empty white space at the top of the file view.
+- **Non-Destructive Bottom Docking (`nautilus_f12/layouts/bottom_paned.py`)**:
+  - Replaced slot child-removal and reparenting with non-destructive window-level bottom packing (`pack_end` / `append`).
+  - Nautilus file views, icons, sidebars, and breadcrumbs remain 100% untouched in their native layout hierarchy without vertical displacement.
+
+---
+
 ## [1.3.2] - (23-09-2026 09:47 AM GMT+6)
 
 ### Fixed

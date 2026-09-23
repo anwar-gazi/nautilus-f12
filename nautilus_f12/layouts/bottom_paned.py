@@ -1,35 +1,43 @@
 """
-Bottom-Docked Paned Layout Strategy
+Non-Destructive Bottom-Docked Layout Strategy
 """
 
 import logging
 from .base import BaseLayoutStrategy
-from ..gi_stack import IS_GTK4, Gtk, get_widget_children
-from ..config import DEFAULT_TERMINAL_HEIGHT, EXPAND_VIEW_WIDGET_NAMES
+from ..gi_stack import IS_GTK4, Gtk
+from ..config import DEFAULT_TERMINAL_HEIGHT
 
 logger = logging.getLogger("nautilus-f12")
 
 
+def find_window_container(window: Gtk.Window) -> Gtk.Widget:
+    """Locates the root vertical container in the Nautilus window."""
+    if hasattr(window, "get_child") and window.get_child():
+        child = window.get_child()
+        if hasattr(child, "get_child") and child.get_child():
+            return child.get_child()
+        return child
+    elif hasattr(window, "get_children") and window.get_children():
+        return window.get_children()[0]
+    return window
+
+
 class BottomPanedLayoutStrategy(BaseLayoutStrategy):
     """
-    Docks the terminal at the BOTTOM of the NautilusWindowSlot using a vertical Gtk.Paned.
-    Top pane = Nautilus file browser view.
-    Bottom pane = Resizable embedded terminal console.
+    Non-destructively docks the terminal at the very bottom of the Nautilus window.
+    Leaves all of Nautilus's native view widgets untouched to avoid layout corruption.
     """
 
     def __init__(self, min_height: int = DEFAULT_TERMINAL_HEIGHT):
         self.min_height = min_height
-        self.paned = None
-        self.top_vbox = None
         self.bottom_box = None
         self.scrolled_window = None
         self.separator = None
 
-    def mount(self, slot_widget: Gtk.Widget, terminal_widget: Gtk.Widget):
-        self.paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        self.top_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    def mount(self, parent_widget: Gtk.Widget, terminal_widget: Gtk.Widget):
+        container = find_window_container(parent_widget) if isinstance(parent_widget, Gtk.Window) else parent_widget
 
+        self.bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_min_content_height(self.min_height)
@@ -38,45 +46,23 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
         if terminal_widget:
             self.set_child_widget(terminal_widget)
 
-        # Assemble bottom panel
         if IS_GTK4:
             self.bottom_box.append(self.separator)
             self.bottom_box.append(self.scrolled_window)
             self.bottom_box.set_visible(False)
-
-            self.paned.set_start_child(self.top_vbox)
-            self.paned.set_end_child(self.bottom_box)
-            self.paned.set_resize_start_child(True)
-            self.paned.set_shrink_start_child(False)
-            self.paned.set_resize_end_child(False)
-            self.paned.set_shrink_end_child(False)
+            if hasattr(container, "append"):
+                container.append(self.bottom_box)
+            elif hasattr(container, "pack_end"):
+                container.pack_end(self.bottom_box, False, False, 0)
         else:
             self.bottom_box.pack_start(self.separator, False, False, 0)
             self.bottom_box.pack_start(self.scrolled_window, True, True, 0)
             self.bottom_box.set_no_show_all(True)
             self.bottom_box.hide()
-
-            self.paned.pack1(self.top_vbox, resize=True, shrink=False)
-            self.paned.pack2(self.bottom_box, resize=False, shrink=False)
-
-        # Relocate existing view children from slot into top_vbox
-        children = get_widget_children(slot_widget)
-        for child in children:
-            if child != self.paned:
-                slot_widget.remove(child)
-                if IS_GTK4:
-                    self.top_vbox.append(child)
-                else:
-                    expand = child.get_name() in EXPAND_VIEW_WIDGET_NAMES or True
-                    self.top_vbox.pack_start(child, expand, expand, 0)
-
-        # Place paned into slot
-        if IS_GTK4:
-            slot_widget.append(self.paned)
-        else:
-            slot_widget.pack_start(self.paned, True, True, 0)
-            self.paned.show()
-            self.top_vbox.show_all()
+            if hasattr(container, "pack_end"):
+                container.pack_end(self.bottom_box, False, False, 0)
+            elif hasattr(container, "add"):
+                container.add(self.bottom_box)
 
     def set_child_widget(self, terminal_widget: Gtk.Widget):
         if not self.scrolled_window:
@@ -95,18 +81,8 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
                 terminal_widget.show()
 
     def repack(self, slot_widget: Gtk.Widget):
-        """Packs any newly navigated folder view into top_vbox."""
-        if not slot_widget or not self.top_vbox:
-            return
-        children = get_widget_children(slot_widget)
-        for child in children:
-            if child != self.paned:
-                slot_widget.remove(child)
-                if IS_GTK4:
-                    self.top_vbox.append(child)
-                else:
-                    self.top_vbox.pack_start(child, True, True, 0)
-                    child.show_all()
+        # Non-destructive: We do not move or reparent any Nautilus native widgets
+        pass
 
     def show(self):
         if not self.bottom_box:

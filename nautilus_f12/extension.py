@@ -4,8 +4,7 @@ Nautilus Extension Entrypoint & Anchor
 
 import os
 import logging
-from .gi_stack import GObject, Gtk, Gdk, Gio, GLib, Nautilus
-from .config import SLOT_CONTAINER_NAMES
+from .gi_stack import GObject, Gtk, Gdk, Gio, Nautilus
 from .session import TerminalSession
 from .layouts import BottomPanedLayoutStrategy
 from .input import WindowKeyController
@@ -36,48 +35,6 @@ def uri_to_path(file_or_uri) -> str:
     return os.path.expanduser("~")
 
 
-def find_slot_container(widget: Gtk.Widget) -> Gtk.Widget:
-    """Traverses widget tree upwards to locate NautilusWindowSlot."""
-    curr = widget
-    fallback_slot = None
-    while curr:
-        name = curr.get_name() if hasattr(curr, "get_name") else ""
-        type_name = type(curr).__name__
-        if name in SLOT_CONTAINER_NAMES or type_name in SLOT_CONTAINER_NAMES or "Slot" in type_name:
-            return curr
-        # If NautilusWindow is the immediate parent, this curr container represents the active view body
-        parent = curr.get_parent() if hasattr(curr, "get_parent") else None
-        if parent and type(parent).__name__ in ("NautilusWindow", "GtkWindow", "AdwApplicationWindow", "AdwToastOverlay"):
-            if fallback_slot is None:
-                fallback_slot = curr
-        curr = parent
-    return fallback_slot
-
-
-class TerminalAnchor(Gtk.EventBox if hasattr(Gtk, "EventBox") else Gtk.Box):
-    """
-    Zero-size anchor widget inserted into the location bar by Nautilus.
-    Discovers the parent slot and binds the TerminalSession.
-    """
-
-    def __init__(self, uri_or_file, window: Gtk.Window, extension):
-        super().__init__()
-        self.uri_or_file = uri_or_file
-        self.window = window
-        self.extension = extension
-        self.path = uri_to_path(uri_or_file)
-
-        if hasattr(self, "connect_after"):
-            self.connect_after("parent-set", self._on_parent_set)
-        else:
-            self.connect("notify::parent", self._on_parent_set)
-
-    def _on_parent_set(self, widget, old_parent=None):
-        if old_parent and not self.get_parent():
-            return
-        GLib.idle_add(self.extension.bind_slot_session, self)
-
-
 class NautilusF12Extension(GObject.GObject, Nautilus.LocationWidgetProvider):
     """
     Main Nautilus LocationWidgetProvider Extension.
@@ -85,60 +42,42 @@ class NautilusF12Extension(GObject.GObject, Nautilus.LocationWidgetProvider):
 
     def __init__(self):
         super().__init__()
-        self.sessions = {}
+        self.window_sessions = {}
         logger.info("Nautilus F12 Extension loaded.")
 
-    def bind_slot_session(self, anchor: TerminalAnchor):
-        slot = find_slot_container(anchor)
-        if not slot:
-            return
-
-        # Ensure window-level F12 key listener is installed
-        if not hasattr(anchor.window, "_f12_key_controller"):
-            anchor.window._f12_key_controller = WindowKeyController(
-                anchor.window,
+    def get_or_create_window_session(self, window: Gtk.Window, path: str) -> TerminalSession:
+        if window not in self.window_sessions:
+            # Install window-level key controller
+            WindowKeyController(
+                window,
                 Gdk.KEY_F12,
-                lambda: self.toggle_active_session_for_window(anchor.window),
+                lambda: self.toggle_window_session(window),
             )
-
-        if slot in self.sessions:
-            session = self.sessions[slot]
-            session.update_location(anchor.path)
-        else:
             session = TerminalSession(
-                slot_widget=slot,
-                window=anchor.window,
-                initial_path=anchor.path,
+                window=window,
+                initial_path=path,
                 layout_strategy=BottomPanedLayoutStrategy(),
-                on_destroy_callback=self._on_slot_destroyed,
+                on_destroy_callback=self._on_window_destroyed,
             )
-            self.sessions[slot] = session
-            logger.info(f"Bound TerminalSession to active slot ({type(slot).__name__}).")
+            self.window_sessions[window] = session
+            logger.info("Created non-destructive bottom-docked session for NautilusWindow.")
+        return self.window_sessions[window]
 
-    def toggle_active_session_for_window(self, window: Gtk.Window):
-        """Finds the currently visible/mapped tab session in the window and toggles it."""
-        window_sessions = [s for s in self.sessions.values() if s.window == window]
-        if not window_sessions:
-            return
+    def toggle_window_session(self, window: Gtk.Window):
+        if window in self.window_sessions:
+            self.window_sessions[window].toggle()
 
-        # Locate the session whose slot is currently visible/mapped (active tab)
-        active_session = None
-        for s in window_sessions:
-            if hasattr(s.slot, "get_mapped") and s.slot.get_mapped():
-                active_session = s
-                break
-
-        if not active_session:
-            active_session = window_sessions[-1]
-
-        active_session.toggle()
-
-    def _on_slot_destroyed(self, slot_widget: Gtk.Widget):
-        """Removes session reference when tab closes."""
-        if slot_widget in self.sessions:
-            del self.sessions[slot_widget]
-            logger.info("Cleaned up session for closed Nautilus slot.")
+    def _on_window_destroyed(self, window: Gtk.Window):
+        if window in self.window_sessions:
+            del self.window_sessions[window]
+            logger.info("Cleaned up session for closed NautilusWindow.")
 
     def get_widget(self, uri_or_file, window: Gtk.Window) -> Gtk.Widget:
-        """Called by Nautilus when loading a directory view."""
-        return TerminalAnchor(uri_or_file, window, self)
+        """
+        Invoked by Nautilus on navigation.
+        Updates path and returns None so Nautilus allocates ZERO space in the top location bar.
+        """
+        path = uri_to_path(uri_or_file)
+        session = self.get_or_create_window_session(window, path)
+        session.update_location(path)
+        return None
