@@ -10,22 +10,10 @@ from ..config import DEFAULT_TERMINAL_HEIGHT
 logger = logging.getLogger("nautilus-f12")
 
 
-def find_window_container(window: Gtk.Window) -> Gtk.Widget:
-    """Locates the root vertical container in the Nautilus window."""
-    if hasattr(window, "get_child") and window.get_child():
-        child = window.get_child()
-        if hasattr(child, "get_child") and child.get_child():
-            return child.get_child()
-        return child
-    elif hasattr(window, "get_children") and window.get_children():
-        return window.get_children()[0]
-    return window
-
-
 class BottomPanedLayoutStrategy(BaseLayoutStrategy):
     """
-    Non-destructively docks the terminal at the very bottom of the Nautilus window.
-    Leaves all of Nautilus's native view widgets untouched to avoid layout corruption.
+    Non-destructively packs the terminal at the bottom of the active NautilusWindowSlot.
+    Preserves all existing Nautilus view widgets to avoid white-space and geometry issues.
     """
 
     def __init__(self, min_height: int = DEFAULT_TERMINAL_HEIGHT):
@@ -33,10 +21,10 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
         self.bottom_box = None
         self.scrolled_window = None
         self.separator = None
+        self.slot = None
 
-    def mount(self, parent_widget: Gtk.Widget, terminal_widget: Gtk.Widget):
-        container = find_window_container(parent_widget) if isinstance(parent_widget, Gtk.Window) else parent_widget
-
+    def mount(self, slot_widget: Gtk.Widget, terminal_widget: Gtk.Widget):
+        self.slot = slot_widget
         self.bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         self.scrolled_window = Gtk.ScrolledWindow()
@@ -50,19 +38,19 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
             self.bottom_box.append(self.separator)
             self.bottom_box.append(self.scrolled_window)
             self.bottom_box.set_visible(False)
-            if hasattr(container, "append"):
-                container.append(self.bottom_box)
-            elif hasattr(container, "pack_end"):
-                container.pack_end(self.bottom_box, False, False, 0)
+            if hasattr(self.slot, "append"):
+                self.slot.append(self.bottom_box)
+            elif hasattr(self.slot, "pack_end"):
+                self.slot.pack_end(self.bottom_box, False, False, 0)
         else:
             self.bottom_box.pack_start(self.separator, False, False, 0)
             self.bottom_box.pack_start(self.scrolled_window, True, True, 0)
             self.bottom_box.set_no_show_all(True)
             self.bottom_box.hide()
-            if hasattr(container, "pack_end"):
-                container.pack_end(self.bottom_box, False, False, 0)
-            elif hasattr(container, "add"):
-                container.add(self.bottom_box)
+            if hasattr(self.slot, "pack_end"):
+                self.slot.pack_end(self.bottom_box, False, False, 0)
+            elif hasattr(self.slot, "add"):
+                self.slot.add(self.bottom_box)
 
     def set_child_widget(self, terminal_widget: Gtk.Widget):
         if not self.scrolled_window:
@@ -81,7 +69,6 @@ class BottomPanedLayoutStrategy(BaseLayoutStrategy):
                 terminal_widget.show()
 
     def repack(self, slot_widget: Gtk.Widget):
-        # Non-destructive: We do not move or reparent any Nautilus native widgets
         pass
 
     def show(self):

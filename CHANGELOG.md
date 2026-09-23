@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.3.4] - (23-09-2026 10:00 AM GMT+6)
+
+### Fixed
+- **Slot Non-Destructive Bottom Docking (`nautilus_f12/layouts/bottom_paned.py`)**:
+  - Attached the bottom terminal container directly to `NautilusWindowSlot` via `pack_end` / `append`.
+  - Preserved 100% of Nautilus's native view widgets and container geometry, eliminating both the GtkBin single-child warning and white-space corruption.
+- **Zero-Size Hidden Anchor (`nautilus_f12/extension.py`)**:
+  - Restored `TerminalAnchor` with explicit `set_no_show_all(True)` and `set_visible(False)` so Nautilus properly triggers slot binding without reserving any space in the top location bar.
+
+---
+
 ## [1.3.3] - (23-09-2026 09:56 AM GMT+6)
 
 ### Fixed

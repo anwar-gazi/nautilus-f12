@@ -14,16 +14,18 @@ logger = logging.getLogger("nautilus-f12")
 
 class TerminalSession:
     """
-    Coordinates the terminal widget, shell process lifecycle, and layout strategy for a window.
+    Coordinates the terminal widget, shell process lifecycle, and layout strategy for a slot.
     """
 
     def __init__(
         self,
+        slot_widget: Gtk.Widget,
         window: Gtk.Window,
         initial_path: str,
         layout_strategy: Optional[BaseLayoutStrategy] = None,
         on_destroy_callback: Optional[callable] = None,
     ):
+        self.slot = slot_widget
         self.window = window
         self.current_path = initial_path if initial_path else os.path.expanduser("~")
         self.on_destroy_callback = on_destroy_callback
@@ -36,10 +38,11 @@ class TerminalSession:
         # Injected layout strategy (defaults to BottomPanedLayoutStrategy)
         self.layout: BaseLayoutStrategy = layout_strategy or BottomPanedLayoutStrategy()
         
-        # Mount into window hierarchy
-        self.layout.mount(self.window, None)
+        # Mount non-destructively into slot
+        self.layout.mount(self.slot, None)
         
-        # Handle window destruction
+        # Handle slot and window destruction
+        self.slot.connect("destroy", self._on_slot_destroy)
         self.window.connect("destroy", self._on_window_destroy)
 
     def _ensure_terminal_spawned(self):
@@ -103,8 +106,12 @@ class TerminalSession:
         if self.shell_process:
             self.shell_process.terminate()
 
+    def _on_slot_destroy(self, widget):
+        """Cleans up child processes and callback when the tab/slot closes."""
+        self.terminate()
+        if self.on_destroy_callback:
+            self.on_destroy_callback(self.slot)
+
     def _on_window_destroy(self, widget):
         """Cleans up child processes on window close."""
         self.terminate()
-        if self.on_destroy_callback:
-            self.on_destroy_callback(self.window)
