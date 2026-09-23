@@ -39,13 +39,19 @@ def uri_to_path(file_or_uri) -> str:
 def find_slot_container(widget: Gtk.Widget) -> Gtk.Widget:
     """Traverses widget tree upwards to locate NautilusWindowSlot."""
     curr = widget
+    fallback_slot = None
     while curr:
         name = curr.get_name() if hasattr(curr, "get_name") else ""
         type_name = type(curr).__name__
-        if name in SLOT_CONTAINER_NAMES or type_name in SLOT_CONTAINER_NAMES:
+        if name in SLOT_CONTAINER_NAMES or type_name in SLOT_CONTAINER_NAMES or "Slot" in type_name:
             return curr
-        curr = curr.get_parent() if hasattr(curr, "get_parent") else None
-    return None
+        # If NautilusWindow is the immediate parent, this curr container represents the active view body
+        parent = curr.get_parent() if hasattr(curr, "get_parent") else None
+        if parent and type(parent).__name__ in ("NautilusWindow", "GtkWindow", "AdwApplicationWindow", "AdwToastOverlay"):
+            if fallback_slot is None:
+                fallback_slot = curr
+        curr = parent
+    return fallback_slot
 
 
 class TerminalAnchor(Gtk.EventBox if hasattr(Gtk, "EventBox") else Gtk.Box):
@@ -107,7 +113,7 @@ class NautilusF12Extension(GObject.GObject, Nautilus.LocationWidgetProvider):
                 on_destroy_callback=self._on_slot_destroyed,
             )
             self.sessions[slot] = session
-            logger.info("Bound TerminalSession to active NautilusWindowSlot.")
+            logger.info(f"Bound TerminalSession to active slot ({type(slot).__name__}).")
 
     def toggle_active_session_for_window(self, window: Gtk.Window):
         """Finds the currently visible/mapped tab session in the window and toggles it."""
@@ -118,7 +124,7 @@ class NautilusF12Extension(GObject.GObject, Nautilus.LocationWidgetProvider):
         # Locate the session whose slot is currently visible/mapped (active tab)
         active_session = None
         for s in window_sessions:
-            if s.slot.get_mapped():
+            if hasattr(s.slot, "get_mapped") and s.slot.get_mapped():
                 active_session = s
                 break
 

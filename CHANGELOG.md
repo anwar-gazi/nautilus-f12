@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.3.2] - (23-09-2026 09:47 AM GMT+6)
+
+### Fixed
+- **Slot Discovery Traversal (`nautilus_f12/config.py`, `nautilus_f12/extension.py`)**:
+  - Removed generic `"GtkBox"` from `SLOT_CONTAINER_NAMES`. Previously, slot discovery stopped at the immediate top location bar `GtkBox` instead of traversing up to the true `NautilusWindowSlot`, causing the terminal to mount at the top.
+  - Implemented target-matching traversal directly locating `NautilusWindowSlot` to guarantee bottom docking.
+- **Double-Toggle Event Debouncing (`nautilus_f12/input/key_controller.py`)**:
+  - Fixed an issue in GTK3 where both `EventControllerKey` and `window.connect("key-press-event")` triggered simultaneously on a single <kbd>F12</kbd> keypress, causing the terminal to immediately close after opening.
+
+---
+
 ## [1.3.1] - (23-09-2026 09:43 AM GMT+6)
 
 ### Fixed
