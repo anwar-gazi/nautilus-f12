@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.1.1] - (23-09-2026 09:35 AM GMT+6)
+
+### Fixed
+- **PyGObject Dynamic Namespace Negotiation Conflict**:
+  - Resolved `ValueError` / `RepositoryError` caused by requesting `Gtk 4.0` while running on Ubuntu 22.04 LTS's `gir1.2-nautilus-3.0` package.
+  - Implemented coupled dual-stack version probing (`Nautilus 4.0 + Gtk 4.0 + Vte 3.91` with fallback to `Nautilus 3.0 + Gtk 3.0 + Vte 2.91`).
+- **Wayland Key Event Interception**:
+  - Configured `Gtk.PropagationPhase.CAPTURE` on `Gtk.EventControllerKey` so <kbd>F12</kbd> keypresses are reliably captured before child views or search entries consume them.
+- **GTK3 Visibility & Packing Toggle**:
+  - Added `set_no_show_all` / `show_all` handling for GTK3 runtime environments alongside GTK4 `set_visible`.
+
+---
+
 ## [1.1.0] - (23-09-2026 09:27 AM GMT+6)
 
 ### Added
