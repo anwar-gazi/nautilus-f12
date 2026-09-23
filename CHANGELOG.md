@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.3.0] - (23-09-2026 09:41 AM GMT+6)
+
+### Added
+- **Clean Architecture & Strategy Pattern (`nautilus_f12/layouts/`)**:
+  - Introduced `BaseLayoutStrategy` abstract interface decoupling terminal placement from process and extension lifecycles.
+  - Implemented `BottomPanedLayoutStrategy` (vertical `Gtk.Paned` split with bottom dock) and `TopBannerLayoutStrategy` (top slot banner) as swappable strategies.
+  - Changing terminal placement is now isolated to single-line strategy configuration.
+- **Domain Decoupling & Modular Package Structure**:
+  - `nautilus_f12/terminal/shell_process.py`: Isolated non-blocking asynchronous process spawning, signals (`SIGHUP`/`SIGTERM`), PID tracking, and command injection (`cd`).
+  - `nautilus_f12/terminal/vte_widget.py`: Dedicated VTE widget constructor handling fonts, scroll behavior, and clipboard shortcuts (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd>).
+  - `nautilus_f12/input/key_controller.py`: Dedicated window-level hotkey controller using `CAPTURE` phase propagation.
+  - `nautilus_f12/session.py`: High-level session coordinator implementing the full execution state machine.
+  - `nautilus_f12/extension.py`: Lightweight Nautilus `LocationWidgetProvider` entrypoint with zero-overhead slot anchors.
+
+---
+
 ## [1.2.0] - (23-09-2026 09:38 AM GMT+6)
 
 ### Added

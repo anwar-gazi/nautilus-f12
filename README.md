@@ -14,17 +14,42 @@
 
 The **Nautilus F12 Embedded Terminal Extension** injects a native, drop-down terminal console directly into GNOME Files (Nautilus) windows with instantaneous directory tracking and zero GUI lag.
 
-Built specifically to overcome Wayland security sandboxing and modern GTK4 container constraints, this extension attaches input listeners directly to the active application window hierarchy, executes shell processes asynchronously, and manages terminal lifecycles cleanly across tabs, splits, and navigation changes.
+Built with clean architecture and SOLID design principles, this extension cleanly decouples GI version negotiation, VTE widget styling, non-blocking asynchronous process management, layout strategies, and Wayland window-level key interception.
 
 ---
 
-## 🛡️ Bulletproof Guardrails & Design Principles
+## 🛡️ Modular Clean Architecture
 
-* **GTK4 / Nautilus 4.0 Native Layout:** Uses GTK4 widget operations (`Gtk.Box.append()`, `Gtk.ScrolledWindow.set_child()`, `Gtk.Widget.set_visible()`). Eliminates legacy GTK3 crashes (`show_all()`, `add()`, `pack_start()`).
-* **Wayland Key Capture:** Utilizes `Gtk.EventControllerKey` attached directly to top-level `NautilusWindow` instances. Global shortcut grabbers fail under Wayland; this approach ensures hotkeys trigger reliably while Nautilus is focused.
-* **Non-Blocking Process Spawning:** Shell processes are launched asynchronously using `Vte.Terminal.spawn_async`. Prevents file manager freezing and UI stutters during shell startup.
-* **Safe Hierarchy Unparenting:** Automatically unparents location widgets before returning them to new Nautilus slots, preventing widget hierarchy collisions during folder transitions.
-* **Subprocess Safety:** Binds to window `destroy` events to automatically terminate orphaned shell processes with `SIGHUP` when Nautilus windows or tabs close.
+The codebase follows the **Strategy Pattern** and strict **Separation of Concerns**:
+
+```text
+nautilus-f12/
+├── nautilus_f12/
+│   ├── __init__.py               # Package exports
+│   ├── config.py                 # Centralized configuration & constants
+│   ├── gi_stack.py               # Dual-stack GTK3/GTK4 & Nautilus 3/4 negotiator
+│   ├── session.py                # High-level terminal session coordinator
+│   ├── extension.py              # Nautilus LocationWidgetProvider entrypoint
+│   ├── terminal/
+│   │   ├── vte_widget.py         # Pure VTE widget (fonts, scrolling, clipboard shortcuts)
+│   │   └── shell_process.py      # Non-blocking async process manager & directory sync
+│   ├── layouts/
+│   │   ├── base.py               # BaseLayoutStrategy abstract interface
+│   │   ├── bottom_paned.py       # BottomPanedLayoutStrategy (Gtk.Paned with bottom dock)
+│   │   └── top_banner.py         # TopBannerLayoutStrategy (Top banner placement)
+│   └── input/
+│       └── key_controller.py     # Wayland CAPTURE phase key listener
+├── nautilus_f12_terminal.py      # Standalone extension loader
+├── CHANGELOG.md                  # Versioned release log with timestamps
+├── LICENSE                       # Proprietary commercial license
+└── README.md                     # System documentation & deployment guide
+```
+
+### Why This Design is Clean & Extensible:
+* **Layout Swapping is 1 Line of Code:** Changing between bottom dock (`BottomPanedLayoutStrategy`) and top banner (`TopBannerLayoutStrategy`) is decoupled into swappable layout strategies adhering to `BaseLayoutStrategy`.
+* **Zero UI Leakage in Process Management:** `ShellProcess` manages PIDs, signals (`SIGHUP`/`SIGTERM`), async spawning, and `cd` stream feeding without knowing anything about GTK widget layouts.
+* **Universal GI Stack Negotiation:** `gi_stack.py` isolates version requirements, preventing `Gtk 3.0` vs `Gtk 4.0` PyGObject namespace clashes across Ubuntu 22.04 LTS and modern GNOME 43+ distributions.
+* **Wayland Key Event Interception:** `WindowKeyController` attaches `Gtk.EventControllerKey` with `Gtk.PropagationPhase.CAPTURE` directly on the window to ensure <kbd>F12</kbd> triggers reliably regardless of child focus.
 
 ---
 
@@ -37,18 +62,6 @@ Built specifically to overcome Wayland security sandboxing and modern GTK4 conta
 | **`Ctrl+D` / `exit`** | Closes shell | Process cleanly reaped; state reset | N/A |
 | **`F12` (After Exit)** | Resets state and reveals | Spawns **new** shell instance | Synchronized to active Nautilus directory path |
 | **Folder Navigation** | Updates active path reference | Persists running shell | Syncs immediately if visible, or upon next reveal |
-
----
-
-## 🏗️ Architecture & Project Structure
-
-```text
-nautilus-f12/
-├── nautilus_f12_terminal.py   # Primary Nautilus Python extension & lifecycle engine
-├── CHANGELOG.md               # Versioned release log with timestamps
-├── LICENSE                    # Proprietary commercial license
-└── README.md                  # System documentation & deployment guide
-```
 
 ---
 
@@ -83,8 +96,9 @@ sudo pacman -S --needed python-nautilus gtk4 vte4 python-gobject
    mkdir -p ~/.local/share/nautilus-python/extensions
    ```
 
-2. Copy the extension script:
+2. Copy the extension package and loader:
    ```bash
+   cp -r nautilus_f12 ~/.local/share/nautilus-python/extensions/
    cp nautilus_f12_terminal.py ~/.local/share/nautilus-python/extensions/
    chmod +x ~/.local/share/nautilus-python/extensions/nautilus_f12_terminal.py
    ```
@@ -97,6 +111,7 @@ sudo pacman -S --needed python-nautilus gtk4 vte4 python-gobject
 ### Option 2: System-Wide Installation
 
 ```bash
+sudo cp -r nautilus_f12 /usr/share/nautilus-python/extensions/
 sudo cp nautilus_f12_terminal.py /usr/share/nautilus-python/extensions/
 sudo chmod 644 /usr/share/nautilus-python/extensions/nautilus_f12_terminal.py
 nautilus -q
@@ -108,7 +123,7 @@ nautilus -q
 
 | Shortcut | Description |
 | :--- | :--- |
-| <kbd>F12</kbd> | Toggle terminal visibility (Hide / Show / Launch) |
+| <kbd>F12</kbd> | Toggle bottom terminal visibility (Hide / Show / Launch) |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> | Copy selected text to clipboard |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> | Paste text from clipboard into terminal |
 | <kbd>Ctrl</kbd> + <kbd>D</kbd> or `exit` | Terminate active shell process and close terminal |
